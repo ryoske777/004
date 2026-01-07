@@ -1,0 +1,586 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Scores 시트 모아보기</title>
+  <style>
+    :root { --border:#d0d7de; --bg:#f6f8fa; --text:#111; --muted:#57606a; }
+    body { font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif; margin: 20px; color: var(--text); }
+    h1 { font-size: 20px; margin: 0 0 12px; }
+    .row { display:flex; gap:12px; flex-wrap: wrap; align-items: center; }
+    .card { border:1px solid var(--border); border-radius: 10px; padding: 14px; background: #fff; }
+    .card + .card { margin-top: 12px; }
+    .muted { color: var(--muted); font-size: 12px; }
+    button { padding: 10px 12px; border:1px solid var(--border); background: var(--bg); border-radius: 10px; cursor: pointer; }
+    button:hover { filter: brightness(0.98); }
+    input[type="file"] { padding: 8px; border:1px solid var(--border); border-radius: 10px; background: #fff; }
+    .tabs { display:flex; gap:8px; flex-wrap: wrap; margin: 10px 0 0; }
+    .tab { padding: 8px 10px; border:1px solid var(--border); border-radius: 999px; background: #fff; cursor:pointer; }
+    .tab.active { background: var(--bg); font-weight: 700; }
+    .panel { margin-top: 12px; }
+    .grid { display:grid; grid-template-columns: 140px 1fr; gap: 10px; align-items: start; }
+    .label { font-weight: 700; }
+    textarea { width: 100%; min-height: 64px; resize: vertical; padding: 10px; border:1px solid var(--border); border-radius: 10px; background: #fff; }
+    .textarea-big { min-height: 220px; }
+    table { border-collapse: collapse; width: 100%; }
+    th, td { border:1px solid var(--border); padding: 6px 8px; font-size: 12px; vertical-align: top; }
+    th { background: var(--bg); position: sticky; top: 0; }
+    .table-wrap { max-height: 320px; overflow: auto; border:1px solid var(--border); border-radius: 10px; }
+    .pill { display:inline-block; padding: 4px 8px; border:1px solid var(--border); border-radius: 999px; background: var(--bg); font-size: 12px; }
+    .err { color:#b42318; font-weight: 700; }
+    .ok  { color:#1a7f37; font-weight: 700; }
+    .kv { display:flex; gap:10px; flex-wrap: wrap; margin: 8px 0 6px; }
+    .kv .pill { background:#fff; }
+  </style>
+</head>
+<body>
+  <h1>Scores 시트 모아보기</h1>
+
+  <div class="card">
+    <div class="row">
+      <input id="files" type="file" multiple accept=".xlsx,.xls" />
+      <button id="btnParse">검색</button>
+      <span id="status" class="muted">엑셀 파일을 선택한 뒤 검색을 누르세요.</span>
+    </div>
+    <div class="muted" style="margin-top:8px;">
+      - 시트 선택: 시트명이 "Scores" 우선, 없으면 파일 내 2번째 시트 사용<br/>
+      - 평균 산출 점수 범위: <b>M40:N56</b> (기본평가: M40:M56, 품질평가: N40:N56)<br/>
+      - 장르 이해도: <b>M15</b> (M15:P15 병합 셀)
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="row" style="justify-content: space-between;">
+      <div>
+        <div class="label">총 평가점수</div>
+        <div id="overallAvg" style="font-size: 22px; font-weight: 800;">-</div>
+        <div id="overallMeta" class="muted"></div>
+        <div class="kv">
+          <span class="pill" id="overallBasicAvg">기본평가 평균: -</span>
+          <span class="pill" id="overallQualityAvg">품질평가 평균: -</span>
+        </div>
+      </div>
+      <div>
+        <span class="pill" id="fileCountPill">파일 0개</span>
+        <span class="pill" id="scoreCountPill">점수 0개</span>
+      </div>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="label">제출자(성명) 탭</div>
+    <div id="personTabs" class="tabs"></div>
+    <div id="personPanel" class="panel muted">검색 후 탭이 생성됩니다.</div>
+  </div>
+
+  <div class="card">
+    <div class="label">장르 이해도 탭</div>
+    <div class="muted" style="margin-top:6px; line-height:1.6;">
+      입문자: 해당 장르를 거의 플레이해 본 적이 없으며 특징을 잘 알지 못함<br/>
+      초보자: 플레이 경험이 있으나 본격적 특징이나 깊이 있는 이해는 부족함<br/>
+      중급자: 해당 장르의 주요 시스템과 특징을 이해하고 즐기는 수준<br/>
+      숙련자: 해당 장르를 여러 차례 깊게 플레이했으며 숙련점이 파악 가능함<br/>
+      전문가: 장르의 역사·대표작까지 폭넓게 이해하고 심층적 비교 분석이 가능함
+    </div>
+    <div id="levelTabs" class="tabs"></div>
+    <div id="levelPanel" class="panel muted">검색 후 탭이 생성됩니다.</div>
+  </div>
+
+  <script src="https://cdn.jsdelivr.net/npm/xlsx/dist/xlsx.full.min.js"></script>
+  <script>
+    const LEVELS = ["입문자","초보자","중급자","숙련자","전문가"];
+    const $ = (id) => document.getElementById(id);
+
+    function setStatus(msg, kind="muted") {
+      const el = $("status");
+      el.className = kind;
+      el.textContent = msg;
+    }
+
+    function safeText(v) {
+      if (v === undefined || v === null) return "";
+      return String(v).trim();
+    }
+
+    function normalizeLevel(raw) {
+      const t = safeText(raw);
+      if (!t) return "";
+      for (const lv of LEVELS) {
+        if (t.includes(lv)) return lv;
+      }
+      const first = t.split(/\s|\(/)[0]?.trim() || "";
+      if (LEVELS.includes(first)) return first;
+      return "";
+    }
+
+    function getSheet(workbook) {
+      const exact = workbook.Sheets["Scores"];
+      if (exact) return { ws: exact, used: "Scores" };
+
+      const found = workbook.SheetNames.find(n => n && n.trim().toLowerCase() === "scores");
+      if (found && workbook.Sheets[found]) return { ws: workbook.Sheets[found], used: found };
+
+      const secondName = workbook.SheetNames[1];
+      if (secondName && workbook.Sheets[secondName]) return { ws: workbook.Sheets[secondName], used: secondName };
+
+      const firstName = workbook.SheetNames[0];
+      if (firstName && workbook.Sheets[firstName]) return { ws: workbook.Sheets[firstName], used: firstName };
+
+      return { ws: null, used: null };
+    }
+
+    function cellValue(ws, addr) {
+      const c = ws[addr];
+      return c ? c.v : "";
+    }
+
+    function extractRange(ws, a1) {
+      const range = XLSX.utils.decode_range(a1);
+      const rows = [];
+      for (let r = range.s.r; r <= range.e.r; r++) {
+        const row = [];
+        for (let c = range.s.c; c <= range.e.c; c++) {
+          const addr = XLSX.utils.encode_cell({ r, c });
+          row.push(ws[addr] ? ws[addr].v : "");
+        }
+        rows.push(row);
+      }
+      return rows;
+    }
+
+    function rowsToText(rows) {
+      const lines = [];
+      for (const row of rows) {
+        const items = row.map(v => safeText(v)).filter(v => v);
+        if (items.length) lines.push(items.join("\t"));
+      }
+      return lines.join("\n");
+    }
+
+    function collectNumeric(rows) {
+      const nums = [];
+      for (const row of rows) {
+        for (const v of row) {
+          if (v === null || v === undefined || v === "") continue;
+
+          let num = null;
+          if (typeof v === "number" && Number.isFinite(v)) {
+            num = v;
+          } else if (typeof v === "string") {
+            const t = v.trim();
+            if (/^-?\d+(\.\d+)?$/.test(t)) num = parseFloat(t);
+          }
+          if (num === null) continue;
+
+          if (num >= 0 && num <= 10) nums.push(num);
+        }
+      }
+      return nums;
+    }
+
+    function avg(nums) {
+      if (!nums.length) return null;
+      const s = nums.reduce((a,b) => a + b, 0);
+      return s / nums.length;
+    }
+
+    function fmt2(n) {
+      if (n === null || n === undefined || !Number.isFinite(n)) return "-";
+      return n.toFixed(2);
+    }
+
+    function escapeHtml(s) {
+      return s.replace(/[&<>"']/g, (m) => ({
+        "&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"
+      }[m]));
+    }
+
+    function renderTable(rows) {
+      let html = "<div class='table-wrap'><table><tbody>";
+      for (let r = 0; r < rows.length; r++) {
+        html += "<tr>";
+        for (let c = 0; c < rows[r].length; c++) {
+          const v = safeText(rows[r][c]);
+          html += `<td>${escapeHtml(v)}</td>`;
+        }
+        html += "</tr>";
+      }
+      html += "</tbody></table></div>";
+      return html;
+    }
+
+    function buildScoreMiniTable(scorePairs) {
+      let html = "<div class='table-wrap'><table><thead><tr><th>항목</th><th>기본평가</th><th>품질평가</th></tr></thead><tbody>";
+      for (const it of scorePairs) {
+        html += `<tr>
+          <td>${escapeHtml(safeText(it.rowLabel))}</td>
+          <td>${escapeHtml(safeText(it.basic))}</td>
+          <td>${escapeHtml(safeText(it.quality))}</td>
+        </tr>`;
+      }
+      html += "</tbody></table></div>";
+      return html;
+    }
+
+    function buildPersonPanel(p) {
+      const evalText = rowsToText(p.evalRows);
+      const opinionText = rowsToText(p.opinionRows);
+
+      return `
+        <div class="grid">
+          <div class="label">성명</div>
+          <textarea readonly>${p.name}</textarea>
+
+          <div class="label">파일명</div>
+          <textarea readonly>${p.fileName}</textarea>
+
+          <div class="label">장르</div>
+          <textarea readonly>${p.genre}</textarea>
+
+          <div class="label">래퍼런스</div>
+          <textarea readonly>${p.reference}</textarea>
+
+          <div class="label">장르 이해도</div>
+          <textarea readonly>${p.levelNormalized || "미기재"}${p.levelRaw ? "\n\n(원문)\n" + p.levelRaw : ""}</textarea>
+
+          <div class="label">평가 점수</div>
+          <div>
+            <div class="kv">
+              <span class="pill">전체 평균: ${fmt2(p.avgAll)}</span>
+              <span class="pill">기본평가 평균: ${fmt2(p.avgBasic)}</span>
+              <span class="pill">품질평가 평균: ${fmt2(p.avgQuality)}</span>
+              <span class="pill">점수 개수: ${p.allScores.length}개</span>
+            </div>
+            <div class="muted" style="margin: 6px 0;">(M40:N56 점수만 집계)</div>
+            ${buildScoreMiniTable(p.scorePairs)}
+          </div>
+
+          <div class="label">평가 원문</div>
+          <div>
+            <div class="muted" style="margin-bottom:6px;">(C39:P56 전체 표시)</div>
+            ${renderTable(p.evalRows)}
+            <div class="muted" style="margin:8px 0 6px;">(복사용 텍스트)</div>
+            <textarea readonly>${evalText}</textarea>
+          </div>
+
+          <div class="label">종합의견</div>
+          <textarea class="textarea-big" readonly>${opinionText}</textarea>
+        </div>
+      `;
+    }
+
+    function buildAllOpinionsPanel(people) {
+      const parts = [];
+      parts.push(`총 ${people.length}명 종합의견 모음`);
+      parts.push("");
+
+      for (const p of people) {
+        const opinionText = rowsToText(p.opinionRows);
+        parts.push("========================================");
+        parts.push(`성명: ${p.name}`);
+        parts.push("----------------------------------------");
+        parts.push(opinionText || "(내용 없음)");
+        parts.push("");
+      }
+
+      const merged = parts.join("\n");
+
+      return `
+        <div class="grid">
+          <div class="label">전체 종합의견</div>
+          <div>
+            <div class="muted" style="margin-bottom:6px;">
+              모든 평가자의 종합의견(C59:P173)을 한 곳에 모았습니다.
+            </div>
+            <textarea class="textarea-big" readonly>${merged}</textarea>
+          </div>
+        </div>
+      `;
+    }
+
+    function buildAllGenresPanel(people) {
+      const parts = [];
+      parts.push(`총 ${people.length}명 장르 모음`);
+      parts.push("");
+
+      for (const p of people) {
+        parts.push("========================================");
+        parts.push(`성명: ${p.name}`);
+        parts.push("----------------------------------------");
+        parts.push(p.genre ? p.genre : "(내용 없음)");
+        parts.push("");
+      }
+
+      const merged = parts.join("\n");
+
+      return `
+        <div class="grid">
+          <div class="label">전체 장르</div>
+          <div>
+            <div class="muted" style="margin-bottom:6px;">
+              모든 평가자의 장르(E15)을 한 곳에 모았습니다.
+            </div>
+            <textarea class="textarea-big" readonly>${merged}</textarea>
+          </div>
+        </div>
+      `;
+    }
+
+    function buildAllReferencesPanel(people) {
+      const parts = [];
+      parts.push(`총 ${people.length}명 래퍼런스 모음`);
+      parts.push("");
+
+      for (const p of people) {
+        parts.push("========================================");
+        parts.push(`성명: ${p.name}`);
+        parts.push("----------------------------------------");
+        parts.push(p.reference ? p.reference : "(내용 없음)");
+        parts.push("");
+      }
+
+      const merged = parts.join("\n");
+
+      return `
+        <div class="grid">
+          <div class="label">전체 래퍼런스</div>
+          <div>
+            <div class="muted" style="margin-bottom:6px;">
+              모든 평가자의 래퍼런스(E16)을 한 곳에 모았습니다.
+            </div>
+            <textarea class="textarea-big" readonly>${merged}</textarea>
+          </div>
+        </div>
+      `;
+    }
+
+    function buildLevelPanel(level, people) {
+      const group = people.filter(p => p.levelNormalized === level);
+      const all = group.flatMap(p => p.allScores);
+      const basic = group.flatMap(p => p.basicScores);
+      const quality = group.flatMap(p => p.qualityScores);
+
+      const aAll = avg(all);
+      const aB = avg(basic);
+      const aQ = avg(quality);
+
+      const names = group.map(p => p.name).join(", ");
+
+      return `
+        <div class="grid">
+          <div class="label">장르 이해도</div>
+          <textarea readonly>${level}</textarea>
+
+          <div class="label">평균 평가점수</div>
+          <textarea readonly>전체 평균: ${fmt2(aAll)}
+기본평가 평균: ${fmt2(aB)}
+품질평가 평균: ${fmt2(aQ)}</textarea>
+
+          <div class="label">대상 인원</div>
+          <textarea readonly>${group.length}명</textarea>
+
+          <div class="label">성명 목록</div>
+          <textarea class="textarea-big" readonly>${names || "-"}</textarea>
+        </div>
+      `;
+    }
+
+    function setActiveTab(container, btn) {
+      [...container.querySelectorAll(".tab")].forEach(b => b.classList.remove("active"));
+      btn.classList.add("active");
+    }
+
+    async function parseFiles(fileList) {
+      const people = [];
+      const errors = [];
+
+      for (const file of fileList) {
+        try {
+          const buf = await file.arrayBuffer();
+          const wb = XLSX.read(buf, { type: "array" });
+
+          const { ws, used } = getSheet(wb);
+          if (!ws) throw new Error("시트를 찾지 못했습니다.");
+
+          const name = safeText(cellValue(ws, "E14"));
+          const genre = safeText(cellValue(ws, "E15"));
+          const reference = safeText(cellValue(ws, "E16"));
+
+          const levelRaw = safeText(cellValue(ws, "M15"));
+          const levelNormalized = normalizeLevel(levelRaw);
+
+          const evalRows = extractRange(ws, "C39:P56");
+          const opinionRows = extractRange(ws, "C59:P173");
+
+          const basicRows = extractRange(ws, "M40:M56");
+          const qualityRows = extractRange(ws, "N40:N56");
+          const bothRows = extractRange(ws, "M40:N56");
+
+          const basicScores = collectNumeric(basicRows);
+          const qualityScores = collectNumeric(qualityRows);
+          const allScores = collectNumeric(bothRows);
+
+          const avgBasic = avg(basicScores);
+          const avgQuality = avg(qualityScores);
+          const avgAll = avg(allScores);
+
+          const labelRows = extractRange(ws, "C40:C56");
+          const scorePairs = [];
+          for (let i = 0; i < 17; i++) {
+            const rowLabel = safeText(labelRows[i]?.[0]) || `행 ${40 + i}`;
+            const b = safeText(basicRows[i]?.[0]);
+            const q = safeText(qualityRows[i]?.[0]);
+            scorePairs.push({ rowLabel, basic: b, quality: q });
+          }
+
+          people.push({
+            fileName: file.name,
+            sheetUsed: used,
+            name: name || "(성명 미기재)",
+            genre,
+            reference,
+            levelRaw,
+            levelNormalized,
+            evalRows,
+            opinionRows,
+            basicScores,
+            qualityScores,
+            allScores,
+            avgBasic,
+            avgQuality,
+            avgAll,
+            scorePairs
+          });
+
+        } catch (e) {
+          errors.push(`${file.name}: ${e?.message || String(e)}`);
+        }
+      }
+
+      return { people, errors };
+    }
+
+    function renderAll(people, errors) {
+      const allScores = people.flatMap(p => p.allScores);
+      const allBasic = people.flatMap(p => p.basicScores);
+      const allQuality = people.flatMap(p => p.qualityScores);
+
+      const overall = avg(allScores);
+      const overallB = avg(allBasic);
+      const overallQ = avg(allQuality);
+
+      $("overallAvg").textContent = fmt2(overall);
+      $("overallMeta").textContent = `대상 파일 ${people.length}개 · 점수 범위 M40:N56 · 점수 ${allScores.length}개 기준`;
+      $("overallBasicAvg").textContent = `기본평가 평균: ${fmt2(overallB)}`;
+      $("overallQualityAvg").textContent = `품질평가 평균: ${fmt2(overallQ)}`;
+
+      $("fileCountPill").textContent = `파일 ${people.length}개`;
+      $("scoreCountPill").textContent = `점수 ${allScores.length}개`;
+
+      // 제출자 탭
+      const tabs = $("personTabs");
+      const panel = $("personPanel");
+      tabs.innerHTML = "";
+      panel.innerHTML = "";
+
+      if (!people.length) {
+        panel.textContent = "표시할 데이터가 없습니다.";
+      } else {
+        // [전체 종합의견] 탭
+        const allOpinBtn = document.createElement("button");
+        allOpinBtn.type = "button";
+        allOpinBtn.className = "tab";
+        allOpinBtn.textContent = "전체 종합의견";
+        allOpinBtn.addEventListener("click", () => {
+          setActiveTab(tabs, allOpinBtn);
+          panel.innerHTML = buildAllOpinionsPanel(people);
+        });
+        tabs.appendChild(allOpinBtn);
+
+        // [전체 장르] 탭
+        const allGenreBtn = document.createElement("button");
+        allGenreBtn.type = "button";
+        allGenreBtn.className = "tab";
+        allGenreBtn.textContent = "전체 장르";
+        allGenreBtn.addEventListener("click", () => {
+          setActiveTab(tabs, allGenreBtn);
+          panel.innerHTML = buildAllGenresPanel(people);
+        });
+        tabs.appendChild(allGenreBtn);
+
+        // [전체 래퍼런스] 탭
+        const allRefBtn = document.createElement("button");
+        allRefBtn.type = "button";
+        allRefBtn.className = "tab";
+        allRefBtn.textContent = "전체 래퍼런스";
+        allRefBtn.addEventListener("click", () => {
+          setActiveTab(tabs, allRefBtn);
+          panel.innerHTML = buildAllReferencesPanel(people);
+        });
+        tabs.appendChild(allRefBtn);
+
+        // 개인 탭들(기존 동작 유지: 첫 사람 선택)
+        people.forEach((p, idx) => {
+          const btn = document.createElement("button");
+          btn.type = "button";
+          btn.className = "tab" + (idx === 0 ? " active" : "");
+          btn.textContent = p.name;
+          btn.addEventListener("click", () => {
+            setActiveTab(tabs, btn);
+            panel.innerHTML = buildPersonPanel(p);
+          });
+          tabs.appendChild(btn);
+
+          if (idx === 0) panel.innerHTML = buildPersonPanel(p);
+        });
+      }
+
+      // 장르 이해도 탭
+      const levelTabs = $("levelTabs");
+      const levelPanel = $("levelPanel");
+      levelTabs.innerHTML = "";
+      levelPanel.innerHTML = "";
+
+      LEVELS.forEach((lv, idx) => {
+        const btn = document.createElement("button");
+        btn.type = "button";
+        btn.className = "tab" + (idx === 0 ? " active" : "");
+        btn.textContent = lv;
+        btn.addEventListener("click", () => {
+          setActiveTab(levelTabs, btn);
+          levelPanel.innerHTML = buildLevelPanel(lv, people);
+        });
+        levelTabs.appendChild(btn);
+
+        if (idx === 0) levelPanel.innerHTML = buildLevelPanel(lv, people);
+      });
+
+      if (errors.length) {
+        setStatus(`일부 파일 처리 실패: ${errors.length}개 (콘솔에서 상세 확인 가능)`, "err");
+        console.error("파일 처리 실패 목록:", errors);
+      } else {
+        setStatus("처리가 완료되었습니다.", "ok");
+      }
+    }
+
+    $("btnParse").addEventListener("click", async () => {
+      const files = $("files").files;
+      if (!files || !files.length) {
+        setStatus("먼저 엑셀 파일을 선택해 주세요.", "err");
+        return;
+      }
+
+      setStatus("처리 중입니다.", "muted");
+
+      try {
+        const { people, errors } = await parseFiles([...files]);
+        renderAll(people, errors);
+      } catch (e) {
+        setStatus(`치명적 오류: ${e?.message || String(e)}`, "err");
+        console.error(e);
+      }
+    });
+  </script>
+</body>
+</html>

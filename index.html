@@ -1,0 +1,985 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>게임 평가서 탐색기</title>
+  <style>
+    :root { --border:#d0d7de; --bg:#f6f8fa; --text:#111; --muted:#57606a; }
+    body { font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif; margin: 20px; color: var(--text); }
+    h1 { font-size: 20px; margin: 0 0 12px; }
+    .row { display:flex; gap:12px; flex-wrap: wrap; align-items: center; }
+    .card { border:1px solid var(--border); border-radius: 10px; padding: 14px; background: #fff; }
+    .card + .card { margin-top: 12px; }
+    .muted { color: var(--muted); font-size: 12px; }
+    button { padding: 10px 12px; border:1px solid var(--border); background: var(--bg); border-radius: 10px; cursor: pointer; }
+    button:hover { filter: brightness(0.98); }
+    input[type="file"] { padding: 8px; border:1px solid var(--border); border-radius: 10px; background: #fff; }
+    .tabs { display:flex; gap:8px; flex-wrap: wrap; margin: 10px 0 0; }
+    .tab { padding: 8px 10px; border:1px solid var(--border); border-radius: 999px; background: #fff; cursor:pointer; }
+    .tab.active { background: var(--bg); font-weight: 700; }
+    .panel { margin-top: 12px; }
+    .grid { display:grid; grid-template-columns: 140px 1fr; gap: 10px; align-items: start; }
+    .label { font-weight: 700; }
+    textarea { width: 100%; min-height: 64px; resize: vertical; padding: 10px; border:1px solid var(--border); border-radius: 10px; background: #fff; }
+    .textarea-big { min-height: 220px; }
+    table { border-collapse: collapse; width: 100%; }
+    th, td { border:1px solid var(--border); padding: 6px 8px; font-size: 12px; vertical-align: top; }
+    th { background: var(--bg); position: sticky; top: 0; }
+    .table-wrap { max-height: 420px; overflow: auto; border:1px solid var(--border); border-radius: 10px; }
+    .pill { display:inline-block; padding: 4px 8px; border:1px solid var(--border); border-radius: 999px; background: var(--bg); font-size: 12px; }
+    .err { color:#b42318; font-weight: 700; }
+    .ok  { color:#1a7f37; font-weight: 700; }
+    .kv { display:flex; gap:10px; flex-wrap: wrap; margin: 8px 0 6px; }
+    .kv .pill { background:#fff; }
+
+    .chips { display:flex; gap:8px; flex-wrap: wrap; margin: 8px 0 10px; }
+    .chip {
+      padding: 6px 10px;
+      border: 1px solid var(--border);
+      border-radius: 999px;
+      background: #fff;
+      cursor: pointer;
+      font-size: 12px;
+      user-select: none;
+    }
+    .chip.excluded {
+      opacity: 0.55;
+      text-decoration: line-through;
+      background: var(--bg);
+    }
+
+    tr.excluded-row td {
+      opacity: 0.55;
+      text-decoration: line-through;
+    }
+
+    .titleValue { font-size: 22px; font-weight: 900; line-height: 1.25; }
+    .subtle { font-size: 12px; color: var(--muted); margin-top: 6px; line-height: 1.5; }
+  </style>
+</head>
+<body>
+  <h1>게임 평가서 탐색기</h1>
+
+  <div class="card">
+    <div class="row">
+      <input id="files" type="file" multiple accept=".xlsx,.xls" />
+      <button id="btnParse">검색</button>
+      <span id="status" class="muted">엑셀 파일을 선택한 뒤 검색을 누르세요.</span>
+    </div>
+    <div class="muted" style="margin-top:8px;">
+      - 시트 선택: 시트명이 "Scores" 우선, 없으면 파일 내 2번째 시트 사용<br/>
+      - 점수 범위: <b>M40:N56</b> (기본평가: M40:M56, 품질평가: N40:N56)<br/>
+      - 장르 이해도: <b>M15</b> (M15:P15 병합 셀)<br/>
+      - 게임 타이틀: <b>E9:J12 병합 영역</b> (대개 E9에 값 존재)<br/>
+      - 평균 방식(엑셀 화면과 동일): <b>항목별 합산 평균들의 평균</b>, 단 <b>0(점수 없음)은 제외</b>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="label">게임 타이틀</div>
+    <div id="gameTitle" class="titleValue">-</div>
+    <div id="gameTitleMeta" class="muted"></div>
+  </div>
+
+  <div class="card">
+    <div class="row" style="justify-content: space-between;">
+      <div>
+        <div class="label">총 평가점수</div>
+        <div id="overallAvg" style="font-size: 22px; font-weight: 800;">-</div>
+        <div id="overallMeta" class="muted"></div>
+        <div class="kv">
+          <span class="pill" id="overallBasicAvg">기본평가 평균: -</span>
+          <span class="pill" id="overallQualityAvg">품질평가 평균: -</span>
+          <span class="pill" id="excludedMeta">제외 항목: 0개</span>
+          <span class="pill" id="noDataMeta">점수 없음 항목: 0개</span>
+          <span class="pill" id="usedCatsMeta">평균 포함 항목: 0개</span>
+        </div>
+      </div>
+      <div>
+        <span class="pill" id="fileCountPill">파일 0개</span>
+        <span class="pill" id="scoreCountPill">점수 0개</span>
+      </div>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="label">평가자</div>
+    <div id="personTabs" class="tabs"></div>
+    <div id="personPanel" class="panel muted">검색 후 탭이 생성됩니다.</div>
+  </div>
+
+  <div class="card">
+    <div class="label">장르 이해도 탭</div>
+    <div class="muted" style="margin-top:6px; line-height:1.6;">
+      입문자: 해당 장르를 거의 플레이해 본 적이 없으며 특징을 잘 알지 못함<br/>
+      초보자: 플레이 경험이 있으나 본격적 특징이나 깊이 있는 이해는 부족함<br/>
+      중급자: 해당 장르의 주요 시스템과 특징을 이해하고 즐기는 수준<br/>
+      숙련자: 해당 장르를 여러 차례 깊게 플레이했으며 숙련점이 파악 가능함<br/>
+      전문가: 장르의 역사·대표작까지 폭넓게 이해하고 심층적 비교 분석이 가능함
+    </div>
+    <div id="levelTabs" class="tabs"></div>
+    <div id="levelPanel" class="panel muted">검색 후 탭이 생성됩니다.</div>
+  </div>
+
+  <script src="https://cdn.jsdelivr.net/npm/xlsx/dist/xlsx.full.min.js"></script>
+  <script>
+    const LEVELS = ["입문자","초보자","중급자","숙련자","전문가"];
+    const CATEGORIES = [
+      "UI/UX","조작감","그래픽","스토리","사운드","난이도","밸런스","콘텐츠","사이클","최적화","재미","번역","핵심시스템","BM(F2P)","BM(PKG)","학습난이도","기대감"
+    ];
+
+    const STATE = {
+      peopleRaw: [],
+      excluded: new Set(),
+      activeTopTab: { type: "allScores" }, // 검색 후 기본: 전체 종합점수
+      activePersonSubtab: "scores",        // scores | opinion
+      activeLevel: LEVELS[0]
+    };
+
+    const $ = (id) => document.getElementById(id);
+
+    function setStatus(msg, kind="muted") {
+      const el = $("status");
+      el.className = kind;
+      el.textContent = msg;
+    }
+
+    function safeText(v) {
+      if (v === undefined || v === null) return "";
+      return String(v).trim();
+    }
+
+    function normalizeLevel(raw) {
+      const t = safeText(raw);
+      if (!t) return "";
+      for (const lv of LEVELS) if (t.includes(lv)) return lv;
+      const first = t.split(/\s|\(/)[0]?.trim() || "";
+      if (LEVELS.includes(first)) return first;
+      return "";
+    }
+
+    function getSheet(workbook) {
+      const exact = workbook.Sheets["Scores"];
+      if (exact) return { ws: exact, used: "Scores" };
+
+      const found = workbook.SheetNames.find(n => n && n.trim().toLowerCase() === "scores");
+      if (found && workbook.Sheets[found]) return { ws: workbook.Sheets[found], used: found };
+
+      const secondName = workbook.SheetNames[1];
+      if (secondName && workbook.Sheets[secondName]) return { ws: workbook.Sheets[secondName], used: secondName };
+
+      const firstName = workbook.SheetNames[0];
+      if (firstName && workbook.Sheets[firstName]) return { ws: workbook.Sheets[firstName], used: firstName };
+
+      return { ws: null, used: null };
+    }
+
+    function cellValue(ws, addr) {
+      const c = ws[addr];
+      return c ? c.v : "";
+    }
+
+    function firstNonEmptyCell(ws, addrs) {
+      for (const a of addrs) {
+        const v = safeText(cellValue(ws, a));
+        if (v) return v;
+      }
+      return "";
+    }
+
+    function extractRange(ws, a1) {
+      const range = XLSX.utils.decode_range(a1);
+      const rows = [];
+      for (let r = range.s.r; r <= range.e.r; r++) {
+        const row = [];
+        for (let c = range.s.c; c <= range.e.c; c++) {
+          const addr = XLSX.utils.encode_cell({ r, c });
+          row.push(ws[addr] ? ws[addr].v : "");
+        }
+        rows.push(row);
+      }
+      return rows;
+    }
+
+    function rowsToText(rows) {
+      const lines = [];
+      for (const row of rows) {
+        const items = row.map(v => safeText(v)).filter(v => v);
+        if (items.length) lines.push(items.join("\t"));
+      }
+      return lines.join("\n");
+    }
+
+    // 점수 판단
+    // 1) 숫자 셀만 포함
+    // 2) 값이 0이면 점수 없음(빈값)으로 간주하여 제외
+    // 3) 0~10 범위 밖은 제외
+    function toNumberOrNullFromCell(cell) {
+      if (!cell) return null;
+      if (cell.t !== "n") return null;
+
+      const v = cell.v;
+      if (typeof v !== "number" || !Number.isFinite(v)) return null;
+
+      if (v === 0) return null;
+      if (v < 0 || v > 10) return null;
+
+      return v;
+    }
+
+    function avgOrNull(nums) {
+      if (!nums.length) return null;
+      const s = nums.reduce((a,b) => a + b, 0);
+      return s / nums.length;
+    }
+
+    function avgOrZero(nums) {
+      if (!nums.length) return 0;
+      const s = nums.reduce((a,b) => a + b, 0);
+      return s / nums.length;
+    }
+
+    // 합산 평균: (기본평가 평균 + 품질평가 평균)/2, 단 한쪽만 있으면 그 값
+    function combineAvg(basicAvg, qualityAvg) {
+      const b = (basicAvg === null || !Number.isFinite(basicAvg)) ? null : basicAvg;
+      const q = (qualityAvg === null || !Number.isFinite(qualityAvg)) ? null : qualityAvg;
+      if (b === null && q === null) return null;
+      if (b !== null && q !== null) return (b + q) / 2;
+      return (b !== null) ? b : q;
+    }
+
+    function fmt2(n) {
+      if (n === null || n === undefined || !Number.isFinite(n)) return "-";
+      return n.toFixed(2);
+    }
+
+    function fmt2OrBlank(n) {
+      if (n === null || n === undefined || !Number.isFinite(n)) return "";
+      return n.toFixed(2);
+    }
+
+    function escapeHtml(s) {
+      return String(s).replace(/[&<>"']/g, (m) => ({
+        "&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"
+      }[m]));
+    }
+
+    // ----- 타이틀 유사도 -----
+    function stripBracketContent(s) {
+      return s
+        .replace(/\([^)]*\)/g, " ")
+        .replace(/\[[^\]]*\]/g, " ")
+        .replace(/\{[^}]*\}/g, " ");
+    }
+    function normalizeTitleForCompare(s) {
+      let t = safeText(s);
+      if (!t) return "";
+      t = stripBracketContent(t);
+      t = t.replace(/[\|\-_:·•]/g, " ");
+      t = t.replace(/\bver(?:sion)?\b\s*\d+(\.\d+)?/gi, " ");
+      t = t.replace(/\bv\s*\d+(\.\d+)?\b/gi, " ");
+      t = t.replace(/\s+/g, " ").trim();
+      return t.toLowerCase();
+    }
+    function levenshteinDistance(a, b) {
+      const n = a.length, m = b.length;
+      if (n === 0) return m;
+      if (m === 0) return n;
+      const dp = new Array(m + 1);
+      for (let j = 0; j <= m; j++) dp[j] = j;
+      for (let i = 1; i <= n; i++) {
+        let prev = dp[0];
+        dp[0] = i;
+        for (let j = 1; j <= m; j++) {
+          const temp = dp[j];
+          const cost = a[i - 1] === b[j - 1] ? 0 : 1;
+          dp[j] = Math.min(dp[j] + 1, dp[j - 1] + 1, prev + cost);
+          prev = temp;
+        }
+      }
+      return dp[m];
+    }
+    function tokenJaccard(a, b) {
+      const ta = a.split(/\s+/).filter(Boolean);
+      const tb = b.split(/\s+/).filter(Boolean);
+      if (!ta.length && !tb.length) return 1;
+      if (!ta.length || !tb.length) return 0;
+      const A = new Set(ta);
+      const B = new Set(tb);
+      let inter = 0;
+      for (const x of A) if (B.has(x)) inter++;
+      const union = A.size + B.size - inter;
+      return union ? inter / union : 0;
+    }
+    function titleSimilarity(aRaw, bRaw) {
+      const a = normalizeTitleForCompare(aRaw);
+      const b = normalizeTitleForCompare(bRaw);
+      if (!a || !b) return 0;
+      const dist = levenshteinDistance(a, b);
+      const levRatio = 1 - (dist / Math.max(a.length, b.length));
+      const jac = tokenJaccard(a, b);
+      return 0.55 * levRatio + 0.45 * jac;
+    }
+    function pickCommonGameTitle(titles) {
+      const cleaned = titles.map(t => safeText(t)).filter(Boolean);
+      if (!cleaned.length) return { chosen: "-", meta: "제목을 찾지 못했습니다." };
+      const threshold = 0.70;
+      const clusters = [];
+      for (const t of cleaned) {
+        let bestIdx = -1;
+        let bestSim = 0;
+        for (let i = 0; i < clusters.length; i++) {
+          const sim = titleSimilarity(t, clusters[i].repRaw);
+          if (sim > bestSim) { bestSim = sim; bestIdx = i; }
+        }
+        if (bestIdx >= 0 && bestSim >= threshold) {
+          clusters[bestIdx].items.push(t);
+          if (safeText(t).length > safeText(clusters[bestIdx].repRaw).length) clusters[bestIdx].repRaw = t;
+        } else {
+          clusters.push({ items: [t], repRaw: t });
+        }
+      }
+      clusters.sort((a, b) => {
+        if (b.items.length !== a.items.length) return b.items.length - a.items.length;
+        return safeText(b.repRaw).length - safeText(a.repRaw).length;
+      });
+      const top = clusters[0];
+      return { chosen: top.repRaw, meta: `후보 ${cleaned.length}개 중 공통 군집 ${top.items.length}개 기준으로 선정했습니다.` };
+    }
+
+    // ----- 개인 점수(전역 제외 반영) -----
+    function computeScoresForPerson(personRaw, excludedSet) {
+      const includedBasic = [];
+      const includedQuality = [];
+      const includedAll = [];
+
+      const rows = personRaw.rows.map((r) => {
+        const excluded = excludedSet.has(r.category);
+        if (!excluded) {
+          if (r.basic !== null) { includedBasic.push(r.basic); includedAll.push(r.basic); }
+          if (r.quality !== null) { includedQuality.push(r.quality); includedAll.push(r.quality); }
+        }
+        return { ...r, excluded };
+      });
+
+      return {
+        rows,
+        countAll: includedAll.length,
+        countBasic: includedBasic.length,
+        countQuality: includedQuality.length,
+        avgAll: avgOrZero(includedAll),
+        avgBasic: avgOrZero(includedBasic),
+        avgQuality: avgOrZero(includedQuality)
+      };
+    }
+
+    // 상단 총평가점수 = (항목별 합산 평균)들의 평균, 단 점수 없는 항목(합산 null) 제외
+    function computeDerived(peopleRaw, excludedSet) {
+      const people = peopleRaw.map(p => {
+        const cs = computeScoresForPerson(p, excludedSet);
+        return { ...p, rowsView: cs.rows, ...cs };
+      });
+
+      const overallCategoryRows = CATEGORIES.map((cat, idx) => {
+        const basicVals = [];
+        const qualityVals = [];
+
+        for (const p of people) {
+          const r = p.rowsView[idx];
+          if (!r) continue;
+          if (r.excluded) continue;
+          if (r.basic !== null) basicVals.push(r.basic);
+          if (r.quality !== null) qualityVals.push(r.quality);
+        }
+
+        const basicAvg = avgOrNull(basicVals);
+        const qualityAvg = avgOrNull(qualityVals);
+        const allAvg = combineAvg(basicAvg, qualityAvg);
+
+        return {
+          category: cat,
+          excluded: excludedSet.has(cat),
+          basicAvg,
+          qualityAvg,
+          allAvg,
+          hasData: (allAvg !== null)
+        };
+      });
+
+      const usableCats = overallCategoryRows.filter(r => !r.excluded && r.allAvg !== null);
+      const overallAvgAll = avgOrZero(usableCats.map(r => r.allAvg));
+
+      // 기본/품질 평균은 셀 단위
+      const allBasicCells = [];
+      const allQualityCells = [];
+      let totalCellCount = 0;
+
+      for (const p of people) {
+        for (const r of p.rowsView) {
+          if (r.excluded) continue;
+          if (r.basic !== null) { allBasicCells.push(r.basic); totalCellCount++; }
+          if (r.quality !== null) { allQualityCells.push(r.quality); totalCellCount++; }
+        }
+      }
+
+      const overall = {
+        avgAll: overallAvgAll,
+        avgBasic: avgOrZero(allBasicCells),
+        avgQuality: avgOrZero(allQualityCells),
+        scoreCount: totalCellCount,
+        noDataCategoryCount: overallCategoryRows.filter(r => !r.excluded && r.allAvg === null).length,
+        usedCategoryCount: usableCats.length
+      };
+
+      // 레벨 탭도 상단과 동일한 방식
+      const levels = {};
+      for (const lv of LEVELS) {
+        const group = people.filter(p => p.levelNormalized === lv);
+
+        const gB = [];
+        const gQ = [];
+
+        const gCatAllAvgs = [];
+        let gNoDataCats = 0;
+
+        for (let i = 0; i < CATEGORIES.length; i++) {
+          const cat = CATEGORIES[i];
+          if (excludedSet.has(cat)) continue;
+
+          const bVals = [];
+          const qVals = [];
+
+          for (const p of group) {
+            const r = p.rowsView[i];
+            if (!r) continue;
+            if (r.excluded) continue;
+
+            if (r.basic !== null) { bVals.push(r.basic); gB.push(r.basic); }
+            if (r.quality !== null) { qVals.push(r.quality); gQ.push(r.quality); }
+          }
+
+          const bAvg = avgOrNull(bVals);
+          const qAvg = avgOrNull(qVals);
+          const aAvg = combineAvg(bAvg, qAvg);
+
+          if (aAvg === null) gNoDataCats++;
+          else gCatAllAvgs.push(aAvg);
+        }
+
+        levels[lv] = {
+          count: group.length,
+          avgAll: avgOrZero(gCatAllAvgs),
+          avgBasic: avgOrZero(gB),
+          avgQuality: avgOrZero(gQ),
+          names: group.map(p => p.name),
+          noDataCats: gNoDataCats,
+          usedCats: gCatAllAvgs.length
+        };
+      }
+
+      return { people, overall, levels, overallCategoryRows };
+    }
+
+    function renderScoreTableRows(rowsView) {
+      let html = "<div class='table-wrap'><table><thead><tr><th>항목</th><th>기본평가</th><th>품질평가</th></tr></thead><tbody>";
+      for (const r of rowsView) {
+        const cls = r.excluded ? " class='excluded-row'" : "";
+        html += `<tr${cls}>
+          <td>${escapeHtml(r.category)}</td>
+          <td>${escapeHtml(r.basic === null ? "" : r.basic.toFixed(2))}</td>
+          <td>${escapeHtml(r.quality === null ? "" : r.quality.toFixed(2))}</td>
+        </tr>`;
+      }
+      html += "</tbody></table></div>";
+      return html;
+    }
+
+    function buildExcludeChips() {
+      let html = `<div class="muted" style="margin: 4px 0 6px;">항목을 클릭하면 전역 제외 또는 포함이 토글됩니다. (상단, 개인, 레벨, 전체 종합점수에 반영)</div>`;
+      html += `<div class="chips">`;
+      for (const c of CATEGORIES) {
+        const ex = STATE.excluded.has(c) ? " excluded" : "";
+        html += `<div class="chip${ex}" data-cat="${escapeHtml(c)}">${escapeHtml(c)}</div>`;
+      }
+      html += `</div>`;
+      return html;
+    }
+
+    function buildPersonPanel(person, personSubtab) {
+      const opinionText = rowsToText(person.opinionRows);
+      const tabScoresActive = personSubtab === "scores" ? "active" : "";
+      const tabOpinionActive = personSubtab === "opinion" ? "active" : "";
+
+      const header = `
+        <div class="grid">
+          <div class="label">성명</div>
+          <textarea readonly>${person.name}</textarea>
+
+          <div class="label">파일명</div>
+          <textarea readonly>${person.fileName}</textarea>
+
+          <div class="label">장르</div>
+          <textarea readonly>${person.genre}</textarea>
+
+          <div class="label">래퍼런스</div>
+          <textarea readonly>${person.reference}</textarea>
+
+          <div class="label">장르 이해도</div>
+          <textarea readonly>${person.levelNormalized || "미기재"}${person.levelRaw ? "\n\n(원문)\n" + person.levelRaw : ""}</textarea>
+
+          <div class="label">보기</div>
+          <div>
+            <div class="tabs" style="margin-top:0;">
+              <button type="button" class="tab ${tabScoresActive}" data-subtab="scores">종합 점수</button>
+              <button type="button" class="tab ${tabOpinionActive}" data-subtab="opinion">종합의견</button>
+            </div>
+          </div>
+        </div>
+      `;
+
+      if (personSubtab === "opinion") {
+        return header + `
+          <div class="card" style="margin-top:12px;">
+            <div class="label">종합의견</div>
+            <textarea class="textarea-big" readonly>${opinionText}</textarea>
+          </div>
+        `;
+      }
+
+      return header + `
+        <div class="card" style="margin-top:12px;">
+          <div class="label">종합 점수</div>
+
+          <div class="kv">
+            <span class="pill">전체 평균(개인 셀 단위): ${fmt2(person.avgAll)}</span>
+            <span class="pill">기본평가 평균: ${fmt2(person.avgBasic)}</span>
+            <span class="pill">품질평가 평균: ${fmt2(person.avgQuality)}</span>
+            <span class="pill">점수 개수: ${person.countAll}개</span>
+          </div>
+
+          ${buildExcludeChips()}
+          ${renderScoreTableRows(person.rowsView)}
+        </div>
+      `;
+    }
+
+    function buildAllOpinionsPanel(people) {
+      const parts = [];
+      parts.push(`총 ${people.length}명 종합의견 모음`);
+      parts.push("");
+      for (const p of people) {
+        const opinionText = rowsToText(p.opinionRows);
+        parts.push("========================================");
+        parts.push(`성명: ${p.name}`);
+        parts.push("----------------------------------------");
+        parts.push(opinionText || "(내용 없음)");
+        parts.push("");
+      }
+      return `
+        <div class="grid">
+          <div class="label">전체 종합의견</div>
+          <div>
+            <div class="muted" style="margin-bottom:6px;">모든 평가자의 종합의견(C59:P173)을 한 곳에 모았습니다.</div>
+            <textarea class="textarea-big" readonly>${parts.join("\n")}</textarea>
+          </div>
+        </div>
+      `;
+    }
+
+    function buildAllGenresPanel(people) {
+      const parts = [];
+      parts.push(`총 ${people.length}명 장르 모음`);
+      parts.push("");
+      for (const p of people) {
+        parts.push("========================================");
+        parts.push(`성명: ${p.name}`);
+        parts.push("----------------------------------------");
+        parts.push(p.genre ? p.genre : "(내용 없음)");
+        parts.push("");
+      }
+      return `
+        <div class="grid">
+          <div class="label">전체 장르</div>
+          <div>
+            <div class="muted" style="margin-bottom:6px;">모든 평가자의 장르(E15)을 한 곳에 모았습니다.</div>
+            <textarea class="textarea-big" readonly>${parts.join("\n")}</textarea>
+          </div>
+        </div>
+      `;
+    }
+
+    function buildAllReferencesPanel(people) {
+      const parts = [];
+      parts.push(`총 ${people.length}명 래퍼런스 모음`);
+      parts.push("");
+      for (const p of people) {
+        parts.push("========================================");
+        parts.push(`성명: ${p.name}`);
+        parts.push("----------------------------------------");
+        parts.push(p.reference ? p.reference : "(내용 없음)");
+        parts.push("");
+      }
+      return `
+        <div class="grid">
+          <div class="label">전체 래퍼런스</div>
+          <div>
+            <div class="muted" style="margin-bottom:6px;">모든 평가자의 래퍼런스(E16)을 한 곳에 모았습니다.</div>
+            <textarea class="textarea-big" readonly>${parts.join("\n")}</textarea>
+          </div>
+        </div>
+      `;
+    }
+
+    function buildAllOverallScoresPanel(derived) {
+      const rows = derived.overallCategoryRows;
+
+      let table = `<div class="subtle">항목을 클릭하면 전역 제외 또는 포함이 토글됩니다. (상단 총 평가점수 포함 전체에 반영)</div>`;
+      table += buildExcludeChips();
+
+      table += `<div class="table-wrap"><table>
+        <thead>
+          <tr>
+            <th>항목</th>
+            <th>기본평가 평균</th>
+            <th>품질평가 평균</th>
+            <th>합산 평균(항목 단위)</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td colspan="4" style="background: var(--bg); font-weight:700;">
+              [평가 점수] (M40:N56) 항목별 전체 평균 (0 또는 빈값은 평균에서 제외)
+            </td>
+          </tr>
+      `;
+
+      for (const r of rows) {
+        const cls = r.excluded ? " class='excluded-row'" : "";
+        table += `<tr${cls}>
+          <td>${escapeHtml(r.category)}</td>
+          <td>${escapeHtml(fmt2OrBlank(r.basicAvg))}</td>
+          <td>${escapeHtml(fmt2OrBlank(r.qualityAvg))}</td>
+          <td>${escapeHtml(fmt2OrBlank(r.allAvg))}</td>
+        </tr>`;
+      }
+
+      table += `</tbody></table></div>`;
+
+      return `
+        <div class="grid">
+          <div class="label">전체 종합점수</div>
+          <div>
+            <div class="kv">
+              <span class="pill">전체 평균(상단과 동일): ${fmt2(derived.overall.avgAll)}</span>
+              <span class="pill">기본평가 평균(셀 단위): ${fmt2(derived.overall.avgBasic)}</span>
+              <span class="pill">품질평가 평균(셀 단위): ${fmt2(derived.overall.avgQuality)}</span>
+            </div>
+            ${table}
+          </div>
+        </div>
+      `;
+    }
+
+    function buildLevelPanel(level, derived) {
+      const info = derived.levels[level];
+      const names = (info.names || []).join(", ");
+      return `
+        <div class="grid">
+          <div class="label">장르 이해도</div>
+          <textarea readonly>${level}</textarea>
+
+          <div class="label">평균 평가점수</div>
+          <textarea readonly>전체 평균(항목 단위): ${fmt2(info.avgAll)}
+기본평가 평균(셀 단위): ${fmt2(info.avgBasic)}
+품질평가 평균(셀 단위): ${fmt2(info.avgQuality)}</textarea>
+
+          <div class="label">대상 인원</div>
+          <textarea readonly>${info.count}명</textarea>
+
+          <div class="label">성명 목록</div>
+          <textarea class="textarea-big" readonly>${names || "-"}</textarea>
+        </div>
+      `;
+    }
+
+    function setActiveTab(container, btn) {
+      [...container.querySelectorAll(".tab")].forEach(b => b.classList.remove("active"));
+      btn.classList.add("active");
+    }
+
+    function rerender() {
+      const derived = computeDerived(STATE.peopleRaw, STATE.excluded);
+      renderAllWithDerived(derived);
+    }
+
+    function renderAllWithDerived(derived) {
+      const people = derived.people;
+
+      // 게임 타이틀
+      if (STATE.peopleRaw.length) {
+        const titles = STATE.peopleRaw.map(p => p.gameTitleRaw).filter(Boolean);
+        const { chosen, meta } = pickCommonGameTitle(titles);
+        $("gameTitle").textContent = chosen || "-";
+        $("gameTitleMeta").textContent = meta;
+      } else {
+        $("gameTitle").textContent = "-";
+        $("gameTitleMeta").textContent = "";
+      }
+
+      // 상단 점수
+      $("overallAvg").textContent = fmt2(derived.overall.avgAll);
+      $("overallBasicAvg").textContent = `기본평가 평균: ${fmt2(derived.overall.avgBasic)}`;
+      $("overallQualityAvg").textContent = `품질평가 평균: ${fmt2(derived.overall.avgQuality)}`;
+      $("overallMeta").textContent =
+        `대상 파일 ${people.length}개 · 총 평가점수: 항목별 합산 평균의 평균(0 또는 빈값 제외)`;
+      $("excludedMeta").textContent = `제외 항목: ${STATE.excluded.size}개`;
+      $("noDataMeta").textContent = `점수 없음 항목: ${derived.overall.noDataCategoryCount}개`;
+      $("usedCatsMeta").textContent = `평균 포함 항목: ${derived.overall.usedCategoryCount}개`;
+
+      $("fileCountPill").textContent = `파일 ${people.length}개`;
+      $("scoreCountPill").textContent = `점수 ${derived.overall.scoreCount}개`;
+
+      // 평가자 탭/패널
+      const tabs = $("personTabs");
+      const panel = $("personPanel");
+      tabs.innerHTML = "";
+      panel.innerHTML = "";
+
+      if (!people.length) {
+        panel.textContent = "표시할 데이터가 없습니다.";
+        return;
+      }
+
+      // ---- 탭 생성 순서 (요청 반영)
+      // 전체 종합점수 -> 전체 종합의견 -> 전체 장르 -> 전체 래퍼런스 -> 개인들
+
+      const btnAllScores = document.createElement("button");
+      btnAllScores.type = "button";
+      btnAllScores.className = "tab";
+      btnAllScores.textContent = "전체 종합점수";
+      btnAllScores.addEventListener("click", () => {
+        STATE.activeTopTab = { type: "allScores" };
+        setActiveTab(tabs, btnAllScores);
+        panel.innerHTML = buildAllOverallScoresPanel(derived);
+        wireGlobalChips(panel);
+      });
+      tabs.appendChild(btnAllScores);
+
+      const btnAllOpin = document.createElement("button");
+      btnAllOpin.type = "button";
+      btnAllOpin.className = "tab";
+      btnAllOpin.textContent = "전체 종합의견";
+      btnAllOpin.addEventListener("click", () => {
+        STATE.activeTopTab = { type: "allOpinions" };
+        setActiveTab(tabs, btnAllOpin);
+        panel.innerHTML = buildAllOpinionsPanel(people);
+      });
+      tabs.appendChild(btnAllOpin);
+
+      const btnAllGenre = document.createElement("button");
+      btnAllGenre.type = "button";
+      btnAllGenre.className = "tab";
+      btnAllGenre.textContent = "전체 장르";
+      btnAllGenre.addEventListener("click", () => {
+        STATE.activeTopTab = { type: "allGenres" };
+        setActiveTab(tabs, btnAllGenre);
+        panel.innerHTML = buildAllGenresPanel(people);
+      });
+      tabs.appendChild(btnAllGenre);
+
+      const btnAllRef = document.createElement("button");
+      btnAllRef.type = "button";
+      btnAllRef.className = "tab";
+      btnAllRef.textContent = "전체 래퍼런스";
+      btnAllRef.addEventListener("click", () => {
+        STATE.activeTopTab = { type: "allRefs" };
+        setActiveTab(tabs, btnAllRef);
+        panel.innerHTML = buildAllReferencesPanel(people);
+      });
+      tabs.appendChild(btnAllRef);
+
+      const personBtns = [];
+      people.forEach((p, idx) => {
+        const btn = document.createElement("button");
+        btn.type = "button";
+        btn.className = "tab";
+        btn.textContent = p.name;
+        btn.addEventListener("click", () => {
+          STATE.activeTopTab = { type: "person", index: idx };
+          STATE.activePersonSubtab = "scores";
+          setActiveTab(tabs, btn);
+          panel.innerHTML = buildPersonPanel(p, STATE.activePersonSubtab);
+          wirePersonPanelInteractions(panel, p);
+        });
+        tabs.appendChild(btn);
+        personBtns.push(btn);
+      });
+
+      // ---- 현재 activeTopTab에 따라 패널 표시
+      const t = STATE.activeTopTab;
+
+      if (t.type === "allScores") {
+        setActiveTab(tabs, btnAllScores);
+        panel.innerHTML = buildAllOverallScoresPanel(derived);
+        wireGlobalChips(panel);
+
+      } else if (t.type === "allOpinions") {
+        setActiveTab(tabs, btnAllOpin);
+        panel.innerHTML = buildAllOpinionsPanel(people);
+
+      } else if (t.type === "allGenres") {
+        setActiveTab(tabs, btnAllGenre);
+        panel.innerHTML = buildAllGenresPanel(people);
+
+      } else if (t.type === "allRefs") {
+        setActiveTab(tabs, btnAllRef);
+        panel.innerHTML = buildAllReferencesPanel(people);
+
+      } else {
+        // person
+        const idx = Math.min(Math.max(t.index ?? 0, 0), people.length - 1);
+        STATE.activeTopTab = { type: "person", index: idx };
+        setActiveTab(tabs, personBtns[idx]);
+        panel.innerHTML = buildPersonPanel(people[idx], STATE.activePersonSubtab);
+        wirePersonPanelInteractions(panel, people[idx]);
+      }
+
+      // 장르 이해도 탭
+      const levelTabs = $("levelTabs");
+      const levelPanel = $("levelPanel");
+      levelTabs.innerHTML = "";
+      levelPanel.innerHTML = "";
+
+      LEVELS.forEach((lv) => {
+        const btn = document.createElement("button");
+        btn.type = "button";
+        btn.className = "tab" + (STATE.activeLevel === lv ? " active" : "");
+        btn.textContent = lv;
+        btn.addEventListener("click", () => {
+          STATE.activeLevel = lv;
+          setActiveTab(levelTabs, btn);
+          levelPanel.innerHTML = buildLevelPanel(lv, derived);
+        });
+        levelTabs.appendChild(btn);
+      });
+
+      levelPanel.innerHTML = buildLevelPanel(STATE.activeLevel, derived);
+    }
+
+    function wireGlobalChips(panelEl) {
+      panelEl.querySelectorAll(".chip[data-cat]").forEach(chip => {
+        chip.addEventListener("click", () => {
+          const cat = chip.getAttribute("data-cat");
+          if (!cat) return;
+          if (STATE.excluded.has(cat)) STATE.excluded.delete(cat);
+          else STATE.excluded.add(cat);
+          rerender();
+        });
+      });
+    }
+
+    function wirePersonPanelInteractions(panelEl, person) {
+      panelEl.querySelectorAll("[data-subtab]").forEach(btn => {
+        btn.addEventListener("click", () => {
+          STATE.activePersonSubtab = btn.getAttribute("data-subtab");
+          panelEl.innerHTML = buildPersonPanel(person, STATE.activePersonSubtab);
+          wirePersonPanelInteractions(panelEl, person);
+        });
+      });
+      wireGlobalChips(panelEl);
+    }
+
+    async function parseFiles(fileList) {
+      const peopleRaw = [];
+      const errors = [];
+
+      for (const file of fileList) {
+        try {
+          const buf = await file.arrayBuffer();
+          const wb = XLSX.read(buf, { type: "array" });
+
+          const { ws, used } = getSheet(wb);
+          if (!ws) throw new Error("시트를 찾지 못했습니다.");
+
+          const name = safeText(cellValue(ws, "E14"));
+          const genre = safeText(cellValue(ws, "E15"));
+          const reference = safeText(cellValue(ws, "E16"));
+
+          const levelRaw = safeText(cellValue(ws, "M15"));
+          const levelNormalized = normalizeLevel(levelRaw);
+
+          const opinionRows = extractRange(ws, "C59:P173");
+
+          const titleAddrs = [];
+          const cols = ["E","F","G","H","I","J"];
+          for (let r = 9; r <= 12; r++) for (const c of cols) titleAddrs.push(`${c}${r}`);
+          const gameTitleRaw = firstNonEmptyCell(ws, titleAddrs);
+
+          // 점수
+          const rows = [];
+          for (let i = 0; i < 17; i++) {
+            const rowNum = 40 + i;
+            const basicCell = ws[`M${rowNum}`];
+            const qualityCell = ws[`N${rowNum}`];
+
+            rows.push({
+              category: CATEGORIES[i],
+              basic: toNumberOrNullFromCell(basicCell),
+              quality: toNumberOrNullFromCell(qualityCell)
+            });
+          }
+
+          peopleRaw.push({
+            fileName: file.name,
+            sheetUsed: used,
+            name: name || "(성명 미기재)",
+            genre,
+            reference,
+            levelRaw,
+            levelNormalized,
+            opinionRows,
+            gameTitleRaw,
+            rows
+          });
+
+        } catch (e) {
+          errors.push(`${file.name}: ${e?.message || String(e)}`);
+        }
+      }
+
+      return { peopleRaw, errors };
+    }
+
+    $("btnParse").addEventListener("click", async () => {
+      const files = $("files").files;
+      if (!files || !files.length) { setStatus("먼저 엑셀 파일을 선택해 주세요.", "err"); return; }
+
+      setStatus("처리 중입니다.", "muted");
+
+      try {
+        const { peopleRaw, errors } = await parseFiles([...files]);
+        STATE.peopleRaw = peopleRaw;
+
+        // 검색 후 기본 화면: 전체 종합점수
+        STATE.activeTopTab = { type: "allScores" };
+        STATE.activePersonSubtab = "scores";
+        STATE.activeLevel = LEVELS[0];
+
+        const derived = computeDerived(STATE.peopleRaw, STATE.excluded);
+        renderAllWithDerived(derived);
+
+        if (errors.length) {
+          setStatus(`일부 파일 처리 실패: ${errors.length}개 (콘솔에서 상세 확인 가능)`, "err");
+          console.error("파일 처리 실패 목록:", errors);
+        } else {
+          setStatus("처리가 완료되었습니다.", "ok");
+        }
+      } catch (e) {
+        setStatus(`치명적 오류: ${e?.message || String(e)}`, "err");
+        console.error(e);
+      }
+    });
+  </script>
+</body>
+</html>
